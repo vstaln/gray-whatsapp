@@ -177,6 +177,7 @@ fn cli(argv: &[String]) -> Result<String, String> {
             cfg("phone_number_id","WA_PHONE_ID").unwrap_or("MISSING".into()),
             if cfg("token","WA_TOKEN").is_some() { "set" } else { "MISSING" },
             inbox_path().display())),
+        Some("-h" | "--help" | "help") => Ok("usage: whatsapp setup | serve | status".into()),
         Some(o) => Err(format!("unknown verb {o}")),
     }
 }
