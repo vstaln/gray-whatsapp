@@ -3,8 +3,10 @@
 //! webhook receiver writing ~/.gray/whatsapp/inbox.jsonl (point Meta's
 //! callback at it via a tunnel — README documents the flow);
 //! wa_inbox reads the ledger.
-//! Config: ~/.gray/whatsapp/config.json {"phone_number_id","token","verify"}
-//! or env WA_PHONE_ID / WA_TOKEN / WA_VERIFY.
+//! Config: ~/.gray/whatsapp/config.json {"phone_number_id","token","verify","app_secret"}
+//! or env WA_PHONE_ID / WA_TOKEN / WA_VERIFY / WA_APP_SECRET. Inbound POSTs
+//! are only accepted with a valid X-Hub-Signature-256 (HMAC-SHA256 of the raw
+//! body keyed by app_secret) — set app_secret before pointing Meta at it.
 
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -109,14 +111,55 @@ fn inbox(a: &Value) -> Result<String, String> {
         .join("\n"))
 }
 
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> Vec<u8> {
+    use sha2::{Digest, Sha256};
+    let mut k = [0u8; 64];
+    if key.len() > 64 {
+        k[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let mut inner: Vec<u8> = k.iter().map(|b| b ^ 0x36).collect();
+    inner.extend_from_slice(msg);
+    let ih = Sha256::digest(&inner);
+    let mut outer: Vec<u8> = k.iter().map(|b| b ^ 0x5c).collect();
+    outer.extend_from_slice(&ih);
+    Sha256::digest(&outer).to_vec()
+}
+
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect(),
+    )
+}
+
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |d, (x, y)| d | (x ^ y)) == 0
+}
+
 /// Meta webhook receiver: GET verifies with hub.challenge, POST appends
-/// each text message to inbox.jsonl.
+/// each text message to inbox.jsonl after X-Hub-Signature-256 verifies.
 fn serve(port: u16) -> Result<(), String> {
     let verify = cfg("verify", "WA_VERIFY").unwrap_or_else(|| "gray-wa".into());
+    let secret = cfg("app_secret", "WA_APP_SECRET");
+    if secret.is_none() {
+        return Err(
+            "no app_secret configured — inbound POSTs would be unauthenticated. \
+             Set `whatsapp setup --app-secret …` (or WA_APP_SECRET) to your Meta app secret."
+                .into(),
+        );
+    }
     let l = TcpListener::bind(("0.0.0.0", port)).map_err(|e| e.to_string())?;
-    eprintln!("whatsapp webhook on :{port} (verify token: {verify})");
+    eprintln!("whatsapp webhook on :{port} (signature-verified)");
     for s in l.incoming().flatten() {
         let verify = verify.clone();
+        let secret = secret.clone();
         std::thread::spawn(move || {
             let mut s = s;
             let mut r = BufReader::new(s.try_clone().unwrap());
@@ -128,17 +171,15 @@ fn serve(port: u16) -> Result<(), String> {
             let (method, path) = (parts.next().unwrap_or(""), parts.next().unwrap_or(""));
             // headers
             let mut clen = 0usize;
+            let mut sig = String::new();
             loop {
                 let mut h = String::new();
-                if r.read_line(&mut h).is_err() || h.trim().is_empty() {
-                    break;
-                }
-                if h.to_lowercase().starts_with("content-length:") {
-                    clen = h
-                        .split(':')
-                        .nth(1)
-                        .and_then(|v| v.trim().parse().ok())
-                        .unwrap_or(0);
+                if r.read_line(&mut h).is_err() || h.trim().is_empty() { break; }
+                let l = h.to_lowercase();
+                if l.starts_with("content-length:") {
+                    clen = h.split(':').nth(1).and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+                } else if l.starts_with("x-hub-signature-256:") {
+                    sig = h.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
                 }
             }
             if method == "GET" {
@@ -166,7 +207,19 @@ fn serve(port: u16) -> Result<(), String> {
                 return;
             }
             let mut body = vec![0u8; clen.min(256 * 1024)];
-            let _ = r.read_exact(&mut body);
+            if r.read_exact(&mut body).is_err() { return; }
+            let authed = secret
+                .as_deref()
+                .and_then(|sec| {
+                    sig.strip_prefix("sha256=")
+                        .and_then(hex_decode)
+                        .map(|expected| ct_eq(&expected, &hmac_sha256(sec.as_bytes(), &body)))
+                })
+                .unwrap_or(false);
+            if !authed {
+                let _ = s.write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
             if let Ok(v) = serde_json::from_slice::<Value>(&body) {
                 if let Some(msgs) = v
                     .pointer("/entry/0/changes/0/value/messages")
@@ -204,6 +257,7 @@ fn cli(argv: &[String]) -> Result<String, String> {
                     "--phone-id" => c["phone_number_id"] = json!(it.next().ok_or("--phone-id")?),
                     "--token" => c["token"] = json!(it.next().ok_or("--token")?),
                     "--verify" => c["verify"] = json!(it.next().ok_or("--verify")?),
+                    "--app-secret" => c["app_secret"] = json!(it.next().ok_or("--app-secret")?),
                     o => return Err(format!("unknown flag {o}")),
                 }
             }
