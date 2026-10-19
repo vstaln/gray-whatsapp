@@ -13,4 +13,5 @@ name = "whatsapp"
 path = "src/main.rs"
 [dependencies]
 serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
 ureq = { version = "2", features = ["json"] }
