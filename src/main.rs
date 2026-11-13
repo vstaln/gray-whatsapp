@@ -31,6 +31,7 @@ fn manifest() -> Value {
                 "limit": {"type": "integer"}, "mark_read": {"type": "boolean"}}}},
         ],
         "commands": ["/whatsapp"], "subcommands": ["whatsapp"],
+        "command_descriptions": {"/whatsapp": "set up WhatsApp and run its webhook"},
     })
 }
 
