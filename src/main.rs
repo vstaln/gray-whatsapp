@@ -20,17 +20,18 @@ fn manifest() -> Value {
         "name": NAME, "display_name": "WhatsApp (Cloud API)",
         "version": env!("CARGO_PKG_VERSION"), "protocol": "1.1",
         "tools": [
-            {"name": "wa_send",
+            {"name": "wa_send", "label": "WhatsApp", "preview": "{to}\n{text|firstline}",
              "description": "Send a WhatsApp text via the Business Cloud API.",
              "parameters": {"type": "object", "properties": {
                 "to": {"type": "string", "description": "E.164 digits, no +"},
                 "text": {"type": "string"}}, "required": ["to","text"]}},
-            {"name": "wa_inbox",
+            {"name": "wa_inbox", "label": "WhatsApp inbox",
              "description": "Read inbound messages the local webhook receiver captured (wa serve).",
              "parameters": {"type": "object", "properties": {
                 "limit": {"type": "integer"}, "mark_read": {"type": "boolean"}}}},
         ],
         "commands": ["/whatsapp"], "subcommands": ["whatsapp"],
+        "command_descriptions": {"/whatsapp": "set up WhatsApp and run its webhook"},
     })
 }
 
