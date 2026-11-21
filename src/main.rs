@@ -175,10 +175,16 @@ fn serve(port: u16) -> Result<(), String> {
             let mut sig = String::new();
             loop {
                 let mut h = String::new();
-                if r.read_line(&mut h).is_err() || h.trim().is_empty() { break; }
+                if r.read_line(&mut h).is_err() || h.trim().is_empty() {
+                    break;
+                }
                 let l = h.to_lowercase();
                 if l.starts_with("content-length:") {
-                    clen = h.split(':').nth(1).and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+                    clen = h
+                        .split(':')
+                        .nth(1)
+                        .and_then(|v| v.trim().parse().ok())
+                        .unwrap_or(0);
                 } else if l.starts_with("x-hub-signature-256:") {
                     sig = h.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
                 }
@@ -208,7 +214,9 @@ fn serve(port: u16) -> Result<(), String> {
                 return;
             }
             let mut body = vec![0u8; clen.min(256 * 1024)];
-            if r.read_exact(&mut body).is_err() { return; }
+            if r.read_exact(&mut body).is_err() {
+                return;
+            }
             let authed = secret
                 .as_deref()
                 .and_then(|sec| {
