@@ -129,7 +129,7 @@ fn hmac_sha256(key: &[u8], msg: &[u8]) -> Vec<u8> {
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if !s.len().is_multiple_of(2) || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     Some(
@@ -186,7 +186,12 @@ fn serve(port: u16) -> Result<(), String> {
                         .and_then(|v| v.trim().parse().ok())
                         .unwrap_or(0);
                 } else if l.starts_with("x-hub-signature-256:") {
-                    sig = h.splitn(2, ':').nth(1).unwrap_or("").trim().to_string();
+                    sig = h
+                        .split_once(':')
+                        .map(|x| x.1)
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
                 }
             }
             if method == "GET" {
